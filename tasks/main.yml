@@ -8,53 +8,83 @@
       - "'RedHat' in ansible_os_family"
     msg: "Only RedHat family supported at this time."
 
-- name: Ensure that needed packages are installed
-  package:
-    name: '{{ item  }}'
-    state: present
-  with_items:
-    - krb5-server
-    - krb5-workstation
-
-- name: Ensure that server configuration files are present
-  template:
-    src: '{{ item }}.j2'
-    dest: /var/kerberos/krb5kdc/{{ item }}
-  with_items:
-    - kadm5.acl
-    - kdc.conf
-
-- name: Ensure that client configuration file is present
-  template:
-    src: krb5.conf.j2
-    dest: /etc/krb5.conf
-
-- name: Is there a database already?
-  stat:
-    path: /var/kerberos/krb5kdc/principal
-  register: db_exists
-
-- name: Create the KDC Database
-  command: /bin/bash -c "echo -e '{{ krb5_kdc_master_key }}\n{{ krb5_kdc_master_key }}' | kdb5_util create -s -r '{{ krb5_kdc_realm }}'"
-  when: db_exists.stat.exists == false
-
-- name: Ensure that Kerberos services are enabled and started
-  service:
-    name: '{{ item }}'
-    state: reloaded
-    enabled: yes
-  with_items:
-    - krb5kdc
-    - kadmin
-
-- name: Create and install principals
+- name: Server setup
   block:
-    - name: "Create admin principal"
-      command: /bin/bash -c "echo -e '{{ krb5_kdc_master_key }}\n{{ krb5_kdc_master_key }}' | kadmin.local -q 'addprinc root/admin'"
+    - name: Ensure that needed packages are installed
+      package:
+        name: '{{ item  }}'
+        state: present
+      with_items:
+        - krb5-server
 
-    - name: "Create host principal"
-      command: /bin/bash -c "echo -e '{{ krb5_kdc_master_key }}\n{{ krb5_kdc_master_key }}' | kadmin.local -q 'addprinc -randkey host/{{ krb5_kdc_server }}'"
+    - name: Ensure that server configuration files are present
+      template:
+        src: '{{ item }}.j2'
+        dest: /var/kerberos/krb5kdc/{{ item }}
+      with_items:
+        - kadm5.acl
+        - kdc.conf
 
-    - name: "Copy host principal to keytab"
-      command: /bin/bash -c "echo -e '{{ krb5_kdc_master_key }}\n{{ krb5_kdc_master_key }}' | kadmin.local -q 'ktadd host/{{ krb5_kdc_server }}'"
-  when: db_exists.stat.exists == false
+    - name: Check if KDC database already exists
+      stat:
+        path: /var/kerberos/krb5kdc/principal
+      register: kdc_database
+
+    - name: Create the KDC Database
+      command: /bin/bash -c "echo -e '{{ krb5_kdc_master_key }}\n{{ krb5_kdc_master_key }}' | kdb5_util create -s -r '{{ krb5_kdc_realm }}'"
+      when: not kdc_database.stat.exists
+
+    - name: Ensure that Kerberos services are enabled and started
+      service:
+        name: '{{ item }}'
+        state: reloaded
+        enabled: yes
+      with_items:
+        - krb5kdc
+        - kadmin
+
+    - name: Create admin principal
+      block:
+        - name: "Create admin principal"
+          command: /bin/bash -c "echo -e '{{ krb5_kdc_master_key }}\n{{ krb5_kdc_master_key }}' | kadmin.local -q 'addprinc root/admin'"
+      when: not kdc_database.stat.exists
+  when: "'server' in krb5_modes"
+
+- name: Client setup
+  block:
+    - name: Ensure that needed packages are installed
+      package:
+        name: '{{ item  }}'
+        state: present
+      with_items:
+        - pam_krb5
+
+    - name: Ensure that client configuration file is present
+      template:
+        src: krb5.conf.j2
+        dest: /etc/krb5.conf
+
+    - name: Check if client is already setup
+      stat: path=/etc/krb5.keytab
+      register: krb5_keytab
+
+    - name: Create and install principals
+      block:
+        - name: "Initialise Kerberos"
+          command: /bin/bash -c "echo '{{ krb5_kdc_master_key }}' | kinit root/admin"
+
+        - name: "Create host principal"
+          command: kadmin -w '{{ krb5_kdc_master_key }}' -q 'addprinc -randkey host/{{ ansible_nodename }}'
+
+        - name: "Copy host principal to keytab"
+          command: kadmin -w '{{ krb5_kdc_master_key }}' -q 'ktadd host/{{ ansible_nodename }}'
+      when: not krb5_keytab.stat.exists
+
+    - name: Configure system for Kerberos
+      command: authconfig --enablekrb5 --update
+
+    - name: Enable GSSAPI for sshd
+      lineinfile: dest=/etc/ssh/sshd_config regexp='^GSSAPIAuthentication\s+' line='GSSAPIAuthentication yes'
+      notify:
+        - restart sshd
+  when: "'client' in krb5_modes"

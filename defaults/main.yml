@@ -1,0 +1,4 @@
+---
+krb5_modes:
+  - server
+  - client
