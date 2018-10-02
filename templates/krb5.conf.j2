@@ -9,12 +9,16 @@ includedir /etc/krb5.conf.d/
 
 [libdefaults]
  dns_lookup_realm = false
+ dns_lookup_kdc = false
  ticket_lifetime = 24h
  renew_lifetime = 7d
  forwardable = true
  rdns = false
+ pkinit_anchors = /etc/pki/tls/certs/ca-bundle.crt
+ spake_preauth_groups = edwards25519
  default_realm = {{ krb5_kdc_realm }}
- default_ccache_name = KEYRING:persistent:%{uid}
+ default_ccache_name = KCM:
+ permitted_enctypes = aes256-cts-hmac-sha1-96 camellia256-cts-cmac
 
 [realms]
  {{ krb5_kdc_realm }} = {
@@ -24,5 +28,6 @@ includedir /etc/krb5.conf.d/
 
 [domain_realm]
 {% for domain in krb5_kdc_domains %}
+ .{{ domain }} = {{ krb5_kdc_realm }}
  {{ domain }} = {{ krb5_kdc_realm }}
 {% endfor %}

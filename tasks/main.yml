@@ -57,12 +57,34 @@
         name: '{{ item  }}'
         state: present
       with_items:
-        - pam_krb5
+        - sssd
+        - sssd-krb5
+        - sssd-kcm
+        - sssd-client
 
-    - name: Ensure that client configuration file is present
+    - name: Ensure that Kerberos client configuration file is present
       template:
         src: krb5.conf.j2
         dest: /etc/krb5.conf
+
+    - name: Ensure that sssd configuration file is present
+      template:
+        src: sssd.conf.j2
+        dest: /etc/sssd/sssd.conf
+        owner: root
+        group: root
+        mode: 0600
+
+    - name: Ensure that sssd is enabled and started
+      service:
+        name: sssd
+        state: restarted
+        enabled: yes
+
+    - name: Ensure that sssd KCM is enabled
+      systemd:
+        name: sssd-kcm.socket
+        state: started
 
     - name: Check if client is already setup
       stat: path=/etc/krb5.keytab
@@ -81,7 +103,7 @@
       when: not krb5_keytab.stat.exists
 
     - name: Configure system for Kerberos
-      command: authconfig --enablekrb5 --update
+      command: authconfig --enablesssd --enablesssdauth --update
 
     - name: Enable GSSAPI for sshd
       lineinfile: dest=/etc/ssh/sshd_config regexp='^GSSAPIAuthentication\s+' line='GSSAPIAuthentication yes'
