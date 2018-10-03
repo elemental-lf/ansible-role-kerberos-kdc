@@ -28,6 +28,5 @@ includedir /etc/krb5.conf.d/
 
 [domain_realm]
 {% for domain in krb5_kdc_domains %}
- .{{ domain }} = {{ krb5_kdc_realm }}
  {{ domain }} = {{ krb5_kdc_realm }}
 {% endfor %}
